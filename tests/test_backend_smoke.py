@@ -100,8 +100,6 @@ def test_scheduler_sends_alert_and_records_history(monkeypatch):
                 bot,
                 db_path,
                 "secret-key",
-                "amadeus-id",
-                "amadeus-secret",
             )
         )
 
@@ -146,8 +144,6 @@ def test_scheduler_falls_back_to_amadeus(monkeypatch):
                 bot,
                 db_path,
                 "secret-key",
-                "amadeus-id",
-                "amadeus-secret",
             )
         )
 

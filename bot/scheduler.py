@@ -16,12 +16,9 @@ async def poll_all_watches(
     bot: Any,
     db_path: str,
     kiwi_api_key: str,
-    amadeus_client_id: str,
-    amadeus_client_secret: str,
 ) -> None:
     """Poll every active watch and send Telegram alerts when criteria pass."""
     watches = db.get_all_active_watches(db_path)
-    _ = (amadeus_client_id, amadeus_client_secret)
 
     for watch in watches:
         watch_id = watch["id"]
@@ -75,8 +72,8 @@ async def poll_all_watches(
             price,
         ):
             message = formatter.format_alert(watch, price, currency, booking_url)
-            await bot.send_message(chat_id=watch["user_id"], text=message)
             db.record_alert_sent(db_path, watch_id, price)
+            await bot.send_message(chat_id=watch["user_id"], text=message)
             LOGGER.info("Alert sent for watch %s at %s %s", watch_id, price, currency)
 
         await asyncio.sleep(0.5)

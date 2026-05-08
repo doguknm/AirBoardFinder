@@ -69,8 +69,6 @@ def main() -> None:
             application.bot,
             DB_PATH,
             kiwi_api_key,
-            amadeus_client_id,
-            amadeus_client_secret,
         ],
         id="poll_watches",
         replace_existing=True,
