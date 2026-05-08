@@ -1,0 +1,16 @@
+.env
+data/
+logs/
+__pycache__/
+.pytest_cache/
+pytest-tmp/
+.coverage
+htmlcov/
+
+# Internal dev docs — not for public repo
+AGENTS.md
+CHANGELOG.md
+CLAUDE.md
+CONTRIBUTING.md
+Plans/
+.claude/
