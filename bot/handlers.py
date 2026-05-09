@@ -12,7 +12,7 @@ from bot import db
 
 
 DB_PATH = "data/airboard.db"
-WATCH_USAGE = "Usage: /watch <origin> <destination> <date_from> <date_to> <max_price>"
+WATCH_USAGE = "Usage: /watch <origin> <destination> <date_from> <date_to> <max_price> [currency]"
 DELETE_USAGE = "Usage: /delete <watch_id>"
 
 
@@ -46,11 +46,12 @@ def _valid_iso_date(value: str) -> bool:
 async def watch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /watch <origin> <destination> <date_from> <date_to> <max_price>."""
     args = list(getattr(context, "args", []) or [])
-    if len(args) != 5:
+    if len(args) not in (5, 6):
         await _reply(update, WATCH_USAGE)
         return
 
-    origin, destination, date_from, date_to, max_price_raw = args
+    origin, destination, date_from, date_to, max_price_raw = args[:5]
+    currency = args[5].upper() if len(args) == 6 else "EUR"
     try:
         max_price = float(max_price_raw)
     except ValueError:
@@ -73,20 +74,22 @@ async def watch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         date_from,
         date_to,
         max_price,
+        currency,
     )
     await _reply(
         update,
         (
             f"Watch created (ID: {watch_id}). I'll alert you when "
-            f"{origin} → {destination} drops to {max_price} EUR or below."
+            f"{origin} → {destination} drops to {max_price} {currency} or below."
         ),
     )
 
 
 def _format_watch_line(watch: dict[str, Any]) -> str:
+    currency = watch.get("currency", "EUR")
     return (
         f"[{watch['id']}] {watch['origin']}→{watch['destination']} "
-        f"{watch['date_from']}–{watch['date_to']} max {watch['max_price']} EUR"
+        f"{watch['date_from']}–{watch['date_to']} max {watch['max_price']} {currency}"
     )
 
 

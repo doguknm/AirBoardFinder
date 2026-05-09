@@ -44,7 +44,8 @@ def main() -> None:
     load_dotenv()
 
     telegram_token = _required_env("TELEGRAM_TOKEN")
-    kiwi_api_key = _required_env("KIWI_API_KEY")
+    travelpayouts_token = _required_env("TRAVELPAYOUTS_TOKEN")
+    duffel_api_key = _required_env("DUFFEL_API_KEY")
     amadeus_client_id = _required_env("AMADEUS_CLIENT_ID")
     amadeus_client_secret = _required_env("AMADEUS_CLIENT_SECRET")
     log_level = os.environ.get("LOG_LEVEL", "INFO")
@@ -68,7 +69,8 @@ def main() -> None:
         args=[
             application.bot,
             DB_PATH,
-            kiwi_api_key,
+            travelpayouts_token,
+            duffel_api_key,
         ],
         id="poll_watches",
         replace_existing=True,

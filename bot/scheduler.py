@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from bot import amadeus_client, db, formatter, kiwi_client, sunexpress_scraper
+from bot import amadeus_client, db, duffel_client, formatter, sunexpress_scraper, travelpayouts_client
 
 
 LOGGER = logging.getLogger(__name__)
@@ -15,23 +15,28 @@ LOGGER = logging.getLogger(__name__)
 async def poll_all_watches(
     bot: Any,
     db_path: str,
-    kiwi_api_key: str,
+    travelpayouts_token: str,
+    duffel_api_key: str,
 ) -> None:
     """Poll every active watch and send Telegram alerts when criteria pass."""
     watches = db.get_all_active_watches(db_path)
 
     for watch in watches:
         watch_id = watch["id"]
-        result = await kiwi_client.fetch_price(
+        watch_currency = watch.get("currency", "EUR")
+
+        result = await travelpayouts_client.fetch_price(
             watch["origin"],
             watch["destination"],
             watch["date_from"],
-            watch["date_to"],
-            kiwi_api_key,
+            travelpayouts_token,
+            currency=watch_currency,
         )
 
         if result is None:
-            LOGGER.warning("Kiwi returned no result for watch %s, trying Amadeus.", watch_id)
+            LOGGER.warning(
+                "Travelpayouts returned no result for watch %s, trying Amadeus.", watch_id
+            )
             result = await asyncio.to_thread(
                 amadeus_client.fetch_price,
                 watch["origin"],
@@ -71,7 +76,29 @@ async def poll_all_watches(
             watch_id,
             price,
         ):
-            message = formatter.format_alert(watch, price, currency, booking_url)
+            fare_family: str | None = None
+            duffel_result = await duffel_client.verify_price(
+                watch["origin"],
+                watch["destination"],
+                watch["date_from"],
+                duffel_api_key,
+                currency=watch_currency,
+            )
+            if duffel_result is not None:
+                if duffel_result["price"] > float(watch["max_price"]):
+                    LOGGER.info(
+                        "Duffel verified price %.2f above threshold for watch %s, suppressing.",
+                        duffel_result["price"],
+                        watch_id,
+                    )
+                    await asyncio.sleep(0.5)
+                    continue
+                price = duffel_result["price"]
+                currency = duffel_result["currency"]
+                booking_url = duffel_result["booking_url"]
+                fare_family = duffel_result.get("fare_family")
+
+            message = formatter.format_alert(watch, price, currency, booking_url, fare_family)
             db.record_alert_sent(db_path, watch_id, price)
             await bot.send_message(chat_id=watch["user_id"], text=message)
             LOGGER.info("Alert sent for watch %s at %s %s", watch_id, price, currency)

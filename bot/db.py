@@ -65,6 +65,12 @@ def init_db(db_path: str) -> None:
     with closing(sqlite3.connect(db_path)) as conn:
         conn.executescript(CREATE_TABLES_SQL)
         conn.executescript(CREATE_INDEXES_SQL)
+        try:
+            conn.execute(
+                "ALTER TABLE watches ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists on existing databases
         conn.commit()
 
 
@@ -76,6 +82,7 @@ def create_watch(
     date_from: str,
     date_to: str,
     max_price: float,
+    currency: str = "EUR",
 ) -> int:
     """Insert an active watch and return its database ID."""
     with closing(sqlite3.connect(db_path)) as conn:
@@ -87,11 +94,12 @@ def create_watch(
                 destination,
                 date_from,
                 date_to,
-                max_price
+                max_price,
+                currency
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, origin, destination, date_from, date_to, max_price),
+            (user_id, origin, destination, date_from, date_to, max_price, currency),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -111,6 +119,7 @@ def get_watches_for_user(db_path: str, user_id: int) -> list[dict[str, Any]]:
                 date_from,
                 date_to,
                 max_price,
+                currency,
                 created_at,
                 is_active
             FROM watches
@@ -136,6 +145,7 @@ def get_all_active_watches(db_path: str) -> list[dict[str, Any]]:
                 date_from,
                 date_to,
                 max_price,
+                currency,
                 created_at,
                 is_active
             FROM watches

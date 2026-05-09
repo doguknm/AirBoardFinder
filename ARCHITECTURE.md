@@ -6,7 +6,7 @@ Authoritative technical reference. Read this before touching any module.
 
 ## System Purpose
 
-AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight prices on behalf of registered users. Every 60 minutes APScheduler fires a polling job that queries the Kiwi Tequila API for each active watch (origin, destination, date range, price threshold stored in SQLite). When a found price is at or below the user's threshold and passes a two-layer deduplication check, the bot sends a Telegram alert with the route, price, and booking URL. Users create and manage watches via three Telegram commands: `/watch`, `/list`, `/delete`.
+AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight prices on behalf of registered users. Every 60 minutes APScheduler fires a polling job that queries the Travelpayouts Aviasales Data API (free, cached) for each active watch (origin, destination, date range, price threshold + currency stored in SQLite). When a cached price is at or below the user's threshold and passes a two-layer deduplication check, the bot makes a single real-time Duffel API call to verify the fare is still bookable before sending a Telegram alert. Users create and manage watches via three Telegram commands: `/watch`, `/list`, `/delete`.
 
 ---
 
@@ -16,10 +16,12 @@ AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight
 |---|---|
 | Bot framework | python-telegram-bot 20.x |
 | Scheduler | APScheduler 3.x (AsyncIOScheduler) |
-| Flight data | Kiwi Tequila API v2 |
+| Primary flight data | Travelpayouts Aviasales Data API (cached, free) |
+| Pre-alert verification | Duffel API (real-time, pay-per-verify) |
 | HTTP client | httpx (async) |
 | Storage | SQLite 3 (stdlib `sqlite3`, no ORM) |
-| Fallback flight data | fast-flights (PyPI) |
+| Secondary fallback | Amadeus Self-Service (shutting down July 2026) |
+| Tertiary fallback | SunExpress scraper (Playwright) |
 | Runtime | Python 3.12 |
 | Config | python-dotenv |
 
@@ -33,7 +35,11 @@ AirBoardFinder/
 ├── bot/
 │   ├── __init__.py
 │   ├── db.py                        # Schema init, watches CRUD, deduplication, price history
-│   ├── kiwi_client.py               # Kiwi Tequila HTTP client + fast-flights fallback
+│   ├── travelpayouts_client.py      # Travelpayouts Aviasales Data API — primary polling source
+│   ├── duffel_client.py             # Duffel API — pre-alert price verification
+│   ├── amadeus_client.py            # Amadeus — secondary fallback
+│   ├── sunexpress_scraper.py        # SunExpress Playwright scraper — tertiary fallback
+│   ├── kiwi_client.py               # Deprecated stub (B2B-only since 2025)
 │   ├── formatter.py                 # Alert message formatter
 │   ├── handlers.py                  # Telegram command handlers (/watch, /list, /delete)
 │   └── scheduler.py                 # APScheduler job: poll all active watches
@@ -63,10 +69,12 @@ AirBoardFinder/
 |---|---|
 | `main.py` | Load `.env`, validate required env vars, configure logging (file + stdout), call `db.init_db()`, build Telegram `Application`, register command handlers, create `AsyncIOScheduler` with polling job, call `application.run_polling()` (blocking), shut down scheduler on exit |
 | `bot/db.py` | `init_db()` — `CREATE TABLE IF NOT EXISTS` for all 3 tables + 5 indexes. Watches CRUD (`create_watch`, `get_watches_for_user`, `get_all_active_watches`, `delete_watch`). `should_send_alert()` — two-layer deduplication (read-only). `insert_price_history()`, `record_alert_sent()`. Connection-per-call — no shared global connection. |
-| `bot/kiwi_client.py` | `fetch_price()` — async GET to Kiwi Tequila with `apiKey` header, parses cheapest result. Triggers fast-flights fallback when Kiwi returns no results. Returns `dict | None`. |
-| `bot/formatter.py` | `format_alert()` — produces the Telegram message string from watch + price data. All required fields: route, dates, price + currency, threshold, booking URL. |
-| `bot/handlers.py` | Async handlers for `/watch` (create), `/list` (read), `/delete` (soft-delete). Validates input, calls `db`, replies to user. All operations scoped to `update.effective_user.id`. |
-| `bot/scheduler.py` | `poll_all_watches(bot, db_path, kiwi_api_key)` — async APScheduler job. Iterates active watches, fetches prices, inserts history, checks deduplication, sends alerts, records sent alerts. |
+| `bot/travelpayouts_client.py` | `fetch_price()` — async GET to Travelpayouts Aviasales Data API with `X-Access-Token` header. Returns cached price (48h–7d) as `{price, currency, booking_url, airline}` or `None`. |
+| `bot/duffel_client.py` | `verify_price()` — async POST to Duffel offer-requests endpoint. Returns cheapest real-time offer with `{price, currency, booking_url, fare_family}` or `None`. Never used for booking — verification only. |
+| `bot/kiwi_client.py` | **Deprecated stub** — returns `None` with a warning. Kiwi Tequila is B2B-only. File kept for import compatibility. |
+| `bot/formatter.py` | `format_alert()` — produces the Telegram message string from watch + price data. Optional `fare_family` parameter adds a "Fare:" line when provided. |
+| `bot/handlers.py` | Async handlers for `/watch` (create), `/list` (read), `/delete` (soft-delete). `/watch` accepts optional 6th arg for currency (default EUR). All operations scoped to `update.effective_user.id`. |
+| `bot/scheduler.py` | `poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)` — async APScheduler job. Polling chain: Travelpayouts → Amadeus → SunExpress. When a price passes threshold + dedup, calls Duffel to verify before sending alert. |
 
 ---
 
@@ -76,21 +84,29 @@ AirBoardFinder/
 
 ```
 AsyncIOScheduler
-  └─ poll_all_watches(bot, db_path, kiwi_api_key)
+  └─ poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)
        └─ db.get_all_active_watches(db_path)
             └─ for each watch:
-                 kiwi_client.fetch_price(origin, dest, date_from, date_to, api_key)
-                   └─ GET https://api.tequila.kiwi.com/v2/search  [header: apiKey: ...]
-                        ├─ data[0] found → return {price, currency, booking_url}
-                        └─ data empty   → fast-flights fallback → return dict | None
+                 travelpayouts_client.fetch_price(origin, dest, date_from, token, currency)
+                   └─ GET https://api.travelpayouts.com/v1/prices/cheap
+                        [header: X-Access-Token: ...]
+                        ├─ data[dest] found → return {price, currency, booking_url, airline}
+                        └─ no data → return None
+                 if None → amadeus_client.fetch_price(...)  [secondary fallback]
+                 if None → sunexpress_scraper.fetch_price(...)  [tertiary fallback]
+                 if None → skip watch (log INFO)
                  db.insert_price_history(db_path, watch_id, price, currency, booking_url)
                  if price <= watch["max_price"]:
                    db.should_send_alert(db_path, watch_id, price)
                      ├─ False → skip (deduplication blocked)
                      └─ True  →
-                          formatter.format_alert(watch, price, currency, booking_url)
-                          await bot.send_message(chat_id=watch["user_id"], text=message)
+                          duffel_client.verify_price(origin, dest, date_from, api_key, currency)
+                            ├─ None → use polled price (Duffel failure must not suppress alert)
+                            ├─ price > max_price → suppress alert (cached price was stale)
+                            └─ price <= max_price → use Duffel price + fare_family
+                          formatter.format_alert(watch, price, currency, booking_url, fare_family)
                           db.record_alert_sent(db_path, watch_id, price)
+                          await bot.send_message(chat_id=watch["user_id"], text=message)
                           LOG INFO: Alert sent for watch {id} at {price} {currency}
 ```
 
@@ -120,6 +136,7 @@ Telegram update received
 | `date_from` | TEXT | NOT NULL | ISO-8601 date string `"YYYY-MM-DD"` |
 | `date_to` | TEXT | NOT NULL | ISO-8601 date string `"YYYY-MM-DD"` |
 | `max_price` | REAL | NOT NULL | User's price threshold |
+| `currency` | TEXT | NOT NULL DEFAULT `'EUR'` | ISO 4217 currency code (e.g. `"EUR"`, `"TRY"`) — added via `ALTER TABLE` on startup |
 | `created_at` | TEXT | NOT NULL DEFAULT (datetime('now')) | |
 | `is_active` | INTEGER | NOT NULL DEFAULT 1 | 1 = active, 0 = soft-deleted |
 
@@ -186,39 +203,35 @@ return True
 
 ---
 
-## External API Contract
+## External API Contracts
 
-### Kiwi Tequila v2 Search
+### Travelpayouts Aviasales Data API (primary poller)
 
 | Field | Value |
 |---|---|
 | Method | `GET` |
-| URL | `https://api.tequila.kiwi.com/v2/search` |
-| Auth | HTTP header `apiKey: {KIWI_API_KEY}` — **never a query parameter** |
-| `fly_from` | Origin IATA code |
-| `fly_to` | Destination IATA code |
-| `date_from` | `DD/MM/YYYY` format |
-| `date_to` | `DD/MM/YYYY` format |
-| `curr` | `EUR` (fixed) |
-| `limit` | `1` (cheapest result only) |
-| `sort` | `price` |
+| URL | `https://api.travelpayouts.com/v1/prices/cheap` |
+| Auth | HTTP header `X-Access-Token: {TRAVELPAYOUTS_TOKEN}` — **never a query parameter** |
+| `origin` | Origin IATA code |
+| `destination` | Destination IATA code |
+| `currency` | ISO 4217 code; TRY support is undocumented — API may reject it |
+| `depart_date` | `YYYY-MM-DD` format |
+| `one_way` | `true` |
 
 **Response shape:**
 ```json
 {
-  "data": [
-    {
-      "price": 189.0,
-      "deep_link": "https://www.kiwi.com/deep?...",
-      "..."  : "..."
+  "data": {
+    "ANK": {
+      "0": { "price": 120.0, "airline": "TK", "..." : "..." }
     }
-  ]
+  }
 }
 ```
 
-**Result extraction:** `data[0]["price"]` → price (float), `data[0]["deep_link"]` → booking URL. Currency is always EUR (fixed in request).
+**Result extraction:** pick the entry with the lowest `price` across all keys under `data[destination]`. Booking URL is constructed as `https://www.aviasales.com/search/{origin}{DDMM}{destination}1`.
 
-**No results:** `data` is empty or absent → trigger fast-flights fallback, log `WARNING`.
+**No results / destination absent:** log `WARNING`, return `None`.
 
 **HTTP error (non-2xx):** log at `ERROR` level, return `None`. Do not raise.
 
@@ -226,17 +239,50 @@ return True
 
 ---
 
+### Duffel API (pre-alert verifier)
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `https://api.duffel.com/air/offer_requests?return_offers=true` |
+| Auth | HTTP header `Authorization: Bearer {DUFFEL_API_KEY}` |
+| `Duffel-Version` header | `v2` |
+| Body | `{"data": {"slices": [...], "passengers": [{"type": "adult"}], "cabin_class": "economy"}}` |
+
+**Response shape:**
+```json
+{
+  "data": {
+    "offers": [
+      {
+        "total_amount": "135.00",
+        "total_currency": "EUR",
+        "slices": [{ "fare_brand_name": "EcoFly" }]
+      }
+    ]
+  }
+}
+```
+
+**Result extraction:** pick the offer with the lowest `total_amount`. `fare_family = slices[0]["fare_brand_name"]` (may be `null`).
+
+**No offers / error:** log `WARNING`/`ERROR`, return `None`. Callers must treat `None` as non-fatal — Duffel failure must never suppress an alert.
+
+**Cost model:** $0.005 per call beyond the 1500:1 search-to-book ratio. For this personal bot (no booking flow, zero orders), every verify call incurs the fee. At rare alert thresholds this is negligible; see `docs/adr/002-duffel-verification.md`.
+
+---
+
 ## Telegram Command Interface
 
 | Command | Signature | Success reply | Error reply |
 |---|---|---|---|
-| `/watch` | `/watch <origin> <destination> <date_from> <date_to> <max_price>` | `Watch created (ID: {id}). I'll alert you when {origin} → {destination} drops to {max_price} EUR or below.` | Usage string or validation error message |
-| `/list` | `/list` | Formatted list — one watch per line: `[{id}] {origin}→{destination} {date_from}–{date_to} max {max_price} EUR` | `You have no active watches.` |
+| `/watch` | `/watch <origin> <destination> <date_from> <date_to> <max_price> [currency]` | `Watch created (ID: {id}). I'll alert you when {origin} → {destination} drops to {max_price} {currency} or below.` | Usage string or validation error message |
+| `/list` | `/list` | Formatted list — one watch per line: `[{id}] {origin}→{destination} {date_from}–{date_to} max {max_price} {currency}` | `You have no active watches.` |
 | `/delete` | `/delete <watch_id>` | `Watch {watch_id} deleted.` | `Watch not found or does not belong to you.` |
 
 - All operations are scoped to `update.effective_user.id`.
 - `/delete` enforces ownership at the SQL level: `WHERE id = ? AND user_id = ?`.
-- `/watch` validates: arg count == 5, `max_price` is positive float, `date_from` and `date_to` are valid `YYYY-MM-DD`. On failure: reply with usage string, no DB write.
+- `/watch` validates: arg count == 5 or 6, `max_price` is positive float, `date_from` and `date_to` are valid `YYYY-MM-DD`. Currency defaults to `EUR` when omitted. On failure: reply with usage string, no DB write.
 
 ---
 
@@ -245,7 +291,10 @@ return True
 | Variable | Required | Purpose |
 |---|---|---|
 | `TELEGRAM_TOKEN` | Yes | Bot token from @BotFather |
-| `KIWI_API_KEY` | Yes | API key from tequila.kiwi.com |
+| `TRAVELPAYOUTS_TOKEN` | Yes | Travelpayouts Data API token (free, from travelpayouts.com) |
+| `DUFFEL_API_KEY` | Yes | Duffel API key (from app.duffel.com) |
+| `AMADEUS_CLIENT_ID` | Yes | Amadeus Self-Service client ID (secondary fallback) |
+| `AMADEUS_CLIENT_SECRET` | Yes | Amadeus Self-Service client secret |
 | `LOG_LEVEL` | No (default `INFO`) | Python logging level |
 
 `DB_PATH` is a code constant in `main.py`: `"data/airboard.db"`. Not env-configurable.
@@ -297,3 +346,23 @@ Single-user personal tool — SQLite's zero-overhead, no-server model is correct
 7. **`AsyncIOScheduler` must be started before `application.run_polling()`**
    - **Symptom:** Scheduler never fires; no poll-related log lines appear.
    - **Fix:** Call `scheduler.start()` before `application.run_polling()`. `run_polling()` blocks the thread — anything after it only executes on shutdown.
+
+8. **Travelpayouts token goes in the header, never the URL**
+   - **Symptom:** 401 or silent empty response from Travelpayouts.
+   - **Fix:** `headers={"X-Access-Token": TRAVELPAYOUTS_TOKEN}` in the `httpx` request. Never include the token as a query parameter.
+
+9. **Travelpayouts TRY currency support is undocumented**
+   - **Symptom:** Travelpayouts returns a non-2xx response or empty data when `currency=TRY` is passed.
+   - **Fix:** The scheduler falls through to Amadeus/SunExpress when `fetch_price` returns `None`. No special handling in the client — if TRY is unsupported, the fallback chain handles it transparently.
+
+10. **Duffel `None` return must not suppress an alert**
+    - **Symptom:** Alerts stop firing even though Travelpayouts found a matching price.
+    - **Fix:** In `scheduler.py`, when `duffel_client.verify_price()` returns `None`, proceed with the originally polled price and send the alert. Duffel is a best-effort verifier, not a gating condition.
+
+11. **`watches.currency` column is added via `ALTER TABLE` at startup, not in `CREATE TABLE`**
+    - **Symptom:** `OperationalError: table watches has no column named currency` when reading watches from an old DB that never received the migration.
+    - **Fix:** `db.init_db()` wraps the `ALTER TABLE` in `try/except sqlite3.OperationalError` so it silently skips on fresh databases (where the column already exists from `CREATE TABLE IF NOT EXISTS`) and succeeds on old databases. If a fresh DB somehow lacks the column, rerun `init_db()`.
+
+12. **Amadeus Self-Service is scheduled for decommissioning on July 17, 2026**
+    - **Symptom:** All Amadeus calls return 401/403 after July 2026.
+    - **Fix:** Remove Amadeus from the fallback chain and replace with another source before that date. The bot will continue functioning with only Travelpayouts + SunExpress until then.

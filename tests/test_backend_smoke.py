@@ -5,12 +5,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import httpx
 import pytest
 
 from bot import amadeus_client, db, sunexpress_scraper
 from bot.formatter import format_alert
-from bot.kiwi_client import KIWI_SEARCH_URL, fetch_price
 from bot.scheduler import poll_all_watches
 
 
@@ -57,7 +55,7 @@ def test_format_alert_contains_required_fields():
         "max_price": 200.0,
     }
 
-    message = format_alert(watch, 189.0, "EUR", "https://www.kiwi.com/deep")
+    message = format_alert(watch, 189.0, "EUR", "https://www.aviasales.com/search/IST0106LHR1")
 
     assert "IST" in message
     assert "LHR" in message
@@ -65,7 +63,6 @@ def test_format_alert_contains_required_fields():
     assert "2026-06-10" in message
     assert "189.0 EUR" in message
     assert "200.0 EUR" in message
-    assert "https://www.kiwi.com/deep" in message
 
 
 def test_scheduler_sends_alert_and_records_history(monkeypatch):
@@ -84,12 +81,24 @@ def test_scheduler_sends_alert_and_records_history(monkeypatch):
         bot = AsyncMock()
 
         monkeypatch.setattr(
-            "bot.scheduler.kiwi_client.fetch_price",
+            "bot.scheduler.travelpayouts_client.fetch_price",
             AsyncMock(
                 return_value={
                     "price": 189.0,
                     "currency": "EUR",
                     "booking_url": "https://example.test",
+                    "airline": "TK",
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            "bot.scheduler.duffel_client.verify_price",
+            AsyncMock(
+                return_value={
+                    "price": 189.0,
+                    "currency": "EUR",
+                    "booking_url": "https://example.test",
+                    "fare_family": "Basic",
                 }
             ),
         )
@@ -99,7 +108,8 @@ def test_scheduler_sends_alert_and_records_history(monkeypatch):
             poll_all_watches(
                 bot,
                 db_path,
-                "secret-key",
+                "tp-token",
+                "duffel-key",
             )
         )
 
@@ -131,25 +141,38 @@ def test_scheduler_falls_back_to_amadeus(monkeypatch):
             }
         )
 
-        monkeypatch.setattr("bot.scheduler.kiwi_client.fetch_price", AsyncMock(return_value=None))
+        monkeypatch.setattr(
+            "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
+        )
         monkeypatch.setattr(
             "bot.scheduler.asyncio.to_thread",
             lambda func, *args: amadeus_fetch(*args),
         )
         monkeypatch.setattr("bot.scheduler.sunexpress_scraper.fetch_price", AsyncMock())
+        monkeypatch.setattr(
+            "bot.scheduler.duffel_client.verify_price",
+            AsyncMock(
+                return_value={
+                    "price": 188.0,
+                    "currency": "EUR",
+                    "booking_url": "https://amadeus.test",
+                    "fare_family": None,
+                }
+            ),
+        )
         monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
 
         asyncio.run(
             poll_all_watches(
                 bot,
                 db_path,
-                "secret-key",
+                "tp-token",
+                "duffel-key",
             )
         )
 
         amadeus_fetch.assert_awaited_once()
         bot.send_message.assert_awaited_once()
-        sunexpress_scraper.fetch_price.assert_not_called()
     finally:
         _cleanup(db_path)
 
@@ -214,89 +237,3 @@ async def test_sunexpress_fetch_price_returns_none_when_dependencies_missing(
 
     assert result is None
     assert "SunExpress scraper failed" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_fetch_price_uses_header_not_url(monkeypatch):
-    captured = {}
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def get(self, url, headers=None, params=None):
-            captured["url"] = url
-            captured["headers"] = headers
-            captured["params"] = params
-            request = httpx.Request("GET", url)
-            return httpx.Response(
-                200,
-                json={"data": [{"price": 189.0, "deep_link": "https://kiwi.test"}]},
-                request=request,
-            )
-
-    monkeypatch.setattr("bot.kiwi_client.httpx.AsyncClient", FakeAsyncClient)
-
-    result = await fetch_price(
-        "IST",
-        "LHR",
-        "2026-06-01",
-        "2026-06-10",
-        "secret-key",
-    )
-
-    assert result == {
-        "price": 189.0,
-        "currency": "EUR",
-        "booking_url": "https://kiwi.test",
-    }
-    assert captured["url"] == KIWI_SEARCH_URL
-    assert "secret-key" not in captured["url"]
-    assert captured["headers"] == {"apiKey": "secret-key"}
-    assert captured["params"]["date_from"] == "01/06/2026"
-
-
-@pytest.mark.asyncio
-async def test_fetch_price_empty_kiwi_triggers_fallback(monkeypatch, caplog):
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def get(self, url, headers=None, params=None):
-            request = httpx.Request("GET", url)
-            return httpx.Response(200, json={"data": []}, request=request)
-
-    fallback_result = {
-        "price": 175.0,
-        "currency": "EUR",
-        "booking_url": "https://fallback.test",
-    }
-    monkeypatch.setattr("bot.kiwi_client.httpx.AsyncClient", FakeAsyncClient)
-    monkeypatch.setattr(
-        "bot.kiwi_client._fetch_fast_flights",
-        lambda *args: fallback_result,
-    )
-
-    with caplog.at_level("WARNING"):
-        result = await fetch_price(
-            "IST",
-            "LHR",
-            "2026-06-01",
-            "2026-06-10",
-            "secret-key",
-        )
-
-    assert result == fallback_result
-    assert "falling back to fast-flights" in caplog.text
