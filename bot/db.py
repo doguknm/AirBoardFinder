@@ -7,6 +7,8 @@ import sqlite3
 from typing import Any
 
 
+DB_PATH = "data/airboard.db"
+
 CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS watches (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

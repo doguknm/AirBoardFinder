@@ -12,10 +12,8 @@ from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler
 
 from bot import db, handlers
+from bot.db import DB_PATH
 from bot.scheduler import poll_all_watches
-
-
-DB_PATH = "data/airboard.db"
 
 
 def _required_env(name: str) -> str:

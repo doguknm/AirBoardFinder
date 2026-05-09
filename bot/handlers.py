@@ -9,9 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot import db
-
-
-DB_PATH = "data/airboard.db"
+from bot.db import DB_PATH
 WATCH_USAGE = "Usage: /watch <origin> <destination> <date_from> <date_to> <max_price> [currency]"
 DELETE_USAGE = "Usage: /delete <watch_id>"
 

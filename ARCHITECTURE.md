@@ -278,6 +278,7 @@ return True
 - All operations are scoped to `update.effective_user.id`.
 - `/delete` enforces ownership at the SQL level: `WHERE id = ? AND user_id = ?`.
 - `/watch` validates: arg count == 5 or 6, `max_price` is positive float, `date_from` and `date_to` are valid `YYYY-MM-DD`. Currency defaults to `EUR` when omitted. On failure: reply with usage string, no DB write.
+- **No allowlist/authorization check.** Any Telegram user who finds the bot can create watches. This is intentional for personal use — if you expose the bot publicly, add an `AUTHORIZED_USER_IDS` check before any DB write.
 
 ---
 
@@ -290,7 +291,7 @@ return True
 | `DUFFEL_API_KEY` | Yes | Duffel API key (from app.duffel.com) |
 | `LOG_LEVEL` | No (default `INFO`) | Python logging level |
 
-`DB_PATH` is a code constant in `main.py`: `"data/airboard.db"`. Not env-configurable.
+`DB_PATH` is defined once in `bot/db.py` (`"data/airboard.db"`) and imported by `main.py` and `handlers.py`. Not env-configurable.
 
 ---
 
