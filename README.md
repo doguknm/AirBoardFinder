@@ -1,6 +1,6 @@
 # AirBoardFinder
 
-AirBoardFinder is a single-process Python 3.12 Telegram bot that watches flight prices and sends Telegram alerts when a route drops to or below a user-defined threshold. Polling tries Kiwi Tequila first, then Amadeus, then a SunExpress Playwright scraper as the last resort.
+AirBoardFinder is a single-process Python 3.12 Telegram bot that watches flight prices and sends Telegram alerts when a route drops to or below a user-defined threshold. It polls Travelpayouts (cached prices) as the primary source, verifies candidates with Duffel (real-time) before alerting, and falls back to a SunExpress Playwright scraper as the last resort.
 
 ## Quickstart
 
