@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any
 
+from bot.formatter import aviasales_url
+
 try:
     from amadeus import Client, ResponseError
 except ImportError:  # pragma: no cover - only hit when dependency is absent.
@@ -29,13 +31,6 @@ def _amadeus_client() -> Any | None:
         return None
 
     return Client(client_id=client_id, client_secret=client_secret)
-
-
-def _booking_url(origin: str, destination: str, date_from: str) -> str:
-    return (
-        "https://www.amadeus.com/en/booking/flights?"
-        f"origin={origin}&destination={destination}&departureDate={date_from}"
-    )
 
 
 def fetch_price(
@@ -79,5 +74,5 @@ def fetch_price(
     return {
         "price": float(total),
         "currency": currency,
-        "booking_url": _booking_url(origin, destination, date_from),
+        "booking_url": aviasales_url(origin, destination, date_from),
     }

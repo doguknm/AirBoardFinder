@@ -46,8 +46,6 @@ def main() -> None:
     telegram_token = _required_env("TELEGRAM_TOKEN")
     travelpayouts_token = _required_env("TRAVELPAYOUTS_TOKEN")
     duffel_api_key = _required_env("DUFFEL_API_KEY")
-    amadeus_client_id = _required_env("AMADEUS_CLIENT_ID")
-    amadeus_client_secret = _required_env("AMADEUS_CLIENT_SECRET")
     log_level = os.environ.get("LOG_LEVEL", "INFO")
 
     _configure_logging(log_level)

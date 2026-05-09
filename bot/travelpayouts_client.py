@@ -7,15 +7,11 @@ from typing import Any
 
 import httpx
 
+from bot.formatter import aviasales_url
+
 
 LOGGER = logging.getLogger(__name__)
 TRAVELPAYOUTS_URL = "https://api.travelpayouts.com/v1/prices/cheap"
-
-
-def _aviasales_url(origin: str, destination: str, date_from: str) -> str:
-    parts = date_from.split("-")
-    ddmm = parts[2] + parts[1]
-    return f"https://www.aviasales.com/search/{origin}{ddmm}{destination}1"
 
 
 async def fetch_price(
@@ -79,6 +75,6 @@ async def fetch_price(
     return {
         "price": float(price),
         "currency": currency,
-        "booking_url": _aviasales_url(origin, destination, date_from),
+        "booking_url": aviasales_url(origin, destination, date_from),
         "airline": cheapest.get("airline"),
     }

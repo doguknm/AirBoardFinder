@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS watches (
     date_from   TEXT    NOT NULL,
     date_to     TEXT    NOT NULL,
     max_price   REAL    NOT NULL,
+    currency    TEXT    NOT NULL DEFAULT 'EUR',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     is_active   INTEGER NOT NULL DEFAULT 1
 );

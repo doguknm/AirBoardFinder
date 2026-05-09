@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 
+def aviasales_url(origin: str, destination: str, date_from: str) -> str:
+    parts = date_from.split("-")
+    ddmm = parts[2] + parts[1]
+    return f"https://www.aviasales.com/search/{origin}{ddmm}{destination}1"
+
+
 def format_alert(
     watch: dict,
     price: float,

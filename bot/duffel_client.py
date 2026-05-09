@@ -7,15 +7,11 @@ from typing import Any
 
 import httpx
 
+from bot.formatter import aviasales_url
+
 
 LOGGER = logging.getLogger(__name__)
 DUFFEL_OFFER_REQUESTS_URL = "https://api.duffel.com/air/offer_requests"
-
-
-def _aviasales_url(origin: str, destination: str, date_from: str) -> str:
-    parts = date_from.split("-")
-    ddmm = parts[2] + parts[1]
-    return f"https://www.aviasales.com/search/{origin}{ddmm}{destination}1"
 
 
 async def verify_price(
@@ -89,6 +85,6 @@ async def verify_price(
     return {
         "price": float(price_str),
         "currency": cheapest.get("total_currency", currency),
-        "booking_url": _aviasales_url(origin, destination, date_from),
+        "booking_url": aviasales_url(origin, destination, date_from),
         "fare_family": fare_family,
     }

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import pytest
 
@@ -12,38 +10,24 @@ from bot.formatter import format_alert
 from bot.scheduler import poll_all_watches
 
 
-def _db_path() -> str:
-    Path("data").mkdir(exist_ok=True)
-    return str(Path("data") / f"test-{uuid4().hex}.db")
-
-
-def _cleanup(db_path: str) -> None:
-    path = Path(db_path)
-    if path.exists():
-        path.unlink()
-
-
-def test_db_deduplication_layers():
-    db_path = _db_path()
+def test_db_deduplication_layers(tmp_path):
+    db_path = str(tmp_path / "test.db")
     db.init_db(db_path)
-    try:
-        watch_id = db.create_watch(
-            db_path,
-            123,
-            "IST",
-            "LHR",
-            "2026-06-01",
-            "2026-06-10",
-            200.0,
-        )
+    watch_id = db.create_watch(
+        db_path,
+        123,
+        "IST",
+        "LHR",
+        "2026-06-01",
+        "2026-06-10",
+        200.0,
+    )
 
-        assert db.should_send_alert(db_path, watch_id, 190.0) is True
-        db.record_alert_sent(db_path, watch_id, 190.0)
-        assert db.should_send_alert(db_path, watch_id, 190.0) is False
-        assert db.should_send_alert(db_path, watch_id, 181.0) is False
-        assert db.should_send_alert(db_path, watch_id, 180.5) is True
-    finally:
-        _cleanup(db_path)
+    assert db.should_send_alert(db_path, watch_id, 190.0) is True
+    db.record_alert_sent(db_path, watch_id, 190.0)
+    assert db.should_send_alert(db_path, watch_id, 190.0) is False
+    assert db.should_send_alert(db_path, watch_id, 181.0) is False
+    assert db.should_send_alert(db_path, watch_id, 180.5) is True
 
 
 def test_format_alert_contains_required_fields():
@@ -65,116 +49,110 @@ def test_format_alert_contains_required_fields():
     assert "200.0 EUR" in message
 
 
-def test_scheduler_sends_alert_and_records_history(monkeypatch):
-    db_path = _db_path()
+def test_scheduler_sends_alert_and_records_history(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
     db.init_db(db_path)
-    try:
-        db.create_watch(
+    watch_id = db.create_watch(
+        db_path,
+        123,
+        "IST",
+        "LHR",
+        "2026-06-01",
+        "2026-06-10",
+        200.0,
+    )
+    bot = AsyncMock()
+
+    monkeypatch.setattr(
+        "bot.scheduler.travelpayouts_client.fetch_price",
+        AsyncMock(
+            return_value={
+                "price": 189.0,
+                "currency": "EUR",
+                "booking_url": "https://example.test",
+                "airline": "TK",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "bot.scheduler.duffel_client.verify_price",
+        AsyncMock(
+            return_value={
+                "price": 189.0,
+                "currency": "EUR",
+                "booking_url": "https://example.test",
+                "fare_family": "Basic",
+            }
+        ),
+    )
+    monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
+
+    asyncio.run(
+        poll_all_watches(
+            bot,
             db_path,
-            123,
-            "IST",
-            "LHR",
-            "2026-06-01",
-            "2026-06-10",
-            200.0,
+            "tp-token",
+            "duffel-key",
         )
-        bot = AsyncMock()
+    )
 
-        monkeypatch.setattr(
-            "bot.scheduler.travelpayouts_client.fetch_price",
-            AsyncMock(
-                return_value={
-                    "price": 189.0,
-                    "currency": "EUR",
-                    "booking_url": "https://example.test",
-                    "airline": "TK",
-                }
-            ),
-        )
-        monkeypatch.setattr(
-            "bot.scheduler.duffel_client.verify_price",
-            AsyncMock(
-                return_value={
-                    "price": 189.0,
-                    "currency": "EUR",
-                    "booking_url": "https://example.test",
-                    "fare_family": "Basic",
-                }
-            ),
-        )
-        monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
-
-        asyncio.run(
-            poll_all_watches(
-                bot,
-                db_path,
-                "tp-token",
-                "duffel-key",
-            )
-        )
-
-        bot.send_message.assert_awaited_once()
-        assert db.should_send_alert(db_path, 1, 189.0) is False
-    finally:
-        _cleanup(db_path)
+    bot.send_message.assert_awaited_once()
+    assert db.should_send_alert(db_path, watch_id, 189.0) is False
 
 
-def test_scheduler_falls_back_to_amadeus(monkeypatch):
-    db_path = _db_path()
+def test_scheduler_falls_back_to_amadeus(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
     db.init_db(db_path)
-    try:
-        db.create_watch(
-            db_path,
-            123,
-            "IST",
-            "LHR",
-            "2026-06-01",
-            "2026-06-10",
-            200.0,
-        )
-        bot = AsyncMock()
-        amadeus_fetch = AsyncMock(
+    db.create_watch(
+        db_path,
+        123,
+        "IST",
+        "LHR",
+        "2026-06-01",
+        "2026-06-10",
+        200.0,
+    )
+    bot = AsyncMock()
+    amadeus_fetch = AsyncMock(
+        return_value={
+            "price": 188.0,
+            "currency": "EUR",
+            "booking_url": "https://www.aviasales.com/search/IST0106LHR1",
+        }
+    )
+
+    monkeypatch.setattr(
+        "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "bot.scheduler.asyncio.to_thread",
+        lambda func, *args: amadeus_fetch(*args),
+    )
+    monkeypatch.setattr("bot.scheduler.sunexpress_scraper.fetch_price", AsyncMock())
+    monkeypatch.setattr(
+        "bot.scheduler.duffel_client.verify_price",
+        AsyncMock(
             return_value={
                 "price": 188.0,
                 "currency": "EUR",
-                "booking_url": "https://amadeus.test",
+                "booking_url": "https://www.aviasales.com/search/IST0106LHR1",
+                "fare_family": None,
             }
-        )
+        ),
+    )
+    monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
 
-        monkeypatch.setattr(
-            "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
+    asyncio.run(
+        poll_all_watches(
+            bot,
+            db_path,
+            "tp-token",
+            "duffel-key",
         )
-        monkeypatch.setattr(
-            "bot.scheduler.asyncio.to_thread",
-            lambda func, *args: amadeus_fetch(*args),
-        )
-        monkeypatch.setattr("bot.scheduler.sunexpress_scraper.fetch_price", AsyncMock())
-        monkeypatch.setattr(
-            "bot.scheduler.duffel_client.verify_price",
-            AsyncMock(
-                return_value={
-                    "price": 188.0,
-                    "currency": "EUR",
-                    "booking_url": "https://amadeus.test",
-                    "fare_family": None,
-                }
-            ),
-        )
-        monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
+    )
 
-        asyncio.run(
-            poll_all_watches(
-                bot,
-                db_path,
-                "tp-token",
-                "duffel-key",
-            )
-        )
-
-        amadeus_fetch.assert_awaited_once()
-        bot.send_message.assert_awaited_once()
-    finally:
-        _cleanup(db_path)
+    amadeus_fetch.assert_awaited_once()
+    bot.send_message.assert_awaited_once()
 
 
 def test_amadeus_fetch_price_parses_sdk_response(monkeypatch):
@@ -216,7 +194,7 @@ def test_amadeus_fetch_price_parses_sdk_response(monkeypatch):
 
     assert result["price"] == 177.42
     assert result["currency"] == "EUR"
-    assert result["booking_url"].startswith("https://www.amadeus.com/")
+    assert "aviasales.com" in result["booking_url"]
 
 
 @pytest.mark.asyncio
