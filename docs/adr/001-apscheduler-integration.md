@@ -23,8 +23,8 @@ This keeps the polling job simple: no `asyncio.run_coroutine_threadsafe` boilerp
 
 ## Consequences
 
-The polling job shares the event loop with Telegram update handling. A blocking HTTP request inside the job would stall the bot, so `bot/kiwi_client.py` uses `httpx.AsyncClient()` with `await`. `requests.get` is intentionally not used.
+The polling job shares the event loop with Telegram update handling. A blocking HTTP request inside the job would stall the bot, so all HTTP clients (`travelpayouts_client`, `duffel_client`) use `httpx.AsyncClient()` with `await`. `requests.get` is intentionally not used.
 
 ## Known Risk
 
-Kiwi Tequila free-tier rate limits are undocumented. The polling job includes a small `asyncio.sleep(0.5)` between per-watch requests as a precaution.
+The polling job includes a small `asyncio.sleep(0.5)` between per-watch iterations as a precaution against rate limiting from any of the upstream APIs.

@@ -33,28 +33,29 @@ You need to create a bot account on Telegram. This is free and takes 2 minutes.
 
 ---
 
-## Step 2 — Get a Kiwi Tequila API Key (Required)
+## Step 2 — Get a Travelpayouts Token (Required)
 
-Kiwi Tequila is the primary flight price source.
+Travelpayouts is the primary flight price source. It provides free cached prices from Aviasales.
 
-1. Go to [tequila.kiwi.com](https://tequila.kiwi.com) and create a free account.
-2. After signing in, go to **My API Keys** and create a new key.
-3. Copy the key. It goes into your `.env` file as `KIWI_API_KEY`.
+1. Go to [travelpayouts.com](https://www.travelpayouts.com) and create a free account.
+2. After signing in, go to **Developers → API** (or visit the Data API section).
+3. Copy your **API Token** (a long alphanumeric string).
+4. It goes into your `.env` file as `TRAVELPAYOUTS_TOKEN`.
 
-The free tier is sufficient for personal use with a handful of watches.
+The free tier allows ~200 requests per hour — sufficient for personal use with many watches.
 
 ---
 
-## Step 3 — Get Amadeus API Credentials (Optional but Recommended)
+## Step 3 — Get a Duffel API Key (Required)
 
-Amadeus is the fallback source when Kiwi returns no results. Without it, the bot falls back to a web scraper.
+Duffel is used to verify prices in real-time before an alert is sent, ensuring you're not alerted on stale cached prices.
 
-1. Go to [developers.amadeus.com](https://developers.amadeus.com) and create a free account.
-2. Create a new **Self-Service** application.
-3. Copy the **Client ID** and **Client Secret**.
-4. These go into your `.env` file as `AMADEUS_CLIENT_ID` and `AMADEUS_CLIENT_SECRET`.
-
-If you skip this step, leave those two lines in `.env` with their placeholder values. The bot will skip Amadeus and try the SunExpress scraper instead when Kiwi finds nothing.
+1. Go to [app.duffel.com](https://app.duffel.com) and create a free account.
+2. Navigate to **Developers → API keys** in the left sidebar.
+3. Create a new key — name it anything (e.g. `airboardfinder`).
+4. Start with a **Test** key (`duffel_test_...`) — no charges in test mode.
+5. When going live, create a **Live** key (`duffel_live_...`). Cost is $0.005 per verify call at personal scale.
+6. It goes into your `.env` file as `DUFFEL_API_KEY`.
 
 ---
 
@@ -70,9 +71,8 @@ Then open `.env` in any text editor and fill in your values:
 
 ```
 TELEGRAM_TOKEN=123456789:AAHdqTcvCH1vGWJxfSeofSs35ci-Y-nvKA
-KIWI_API_KEY=your_kiwi_key_here
-AMADEUS_CLIENT_ID=your_amadeus_client_id_here
-AMADEUS_CLIENT_SECRET=your_amadeus_client_secret_here
+TRAVELPAYOUTS_TOKEN=your_travelpayouts_token_here
+DUFFEL_API_KEY=duffel_test_your_key_here
 LOG_LEVEL=INFO
 ```
 
@@ -172,11 +172,13 @@ You can only delete your own watches. Another Telegram user running the same bot
 
 You cannot manually choose which source to use — the bot tries them in order, automatically:
 
-1. **Kiwi Tequila** (primary): checked first on every poll. Covers most routes globally.
-2. **Amadeus** (fallback): tried when Kiwi returns no results for a specific watch. Covers major airlines and routes.
-3. **SunExpress scraper** (last resort): a web scraper that opens the SunExpress website in a headless browser. Only tried when both Kiwi and Amadeus return nothing. Useful for SunExpress-only routes (e.g. Turkey domestic / charter to Germany).
+1. **Travelpayouts** (primary): checked first on every poll. Returns cached Aviasales prices (48h–7d old). Covers most commercial routes globally. Free.
+2. **Amadeus** (fallback): tried when Travelpayouts returns no results. Covers major airlines and routes. Note: Amadeus Self-Service is shutting down July 2026 and will be removed then.
+3. **SunExpress scraper** (last resort): a web scraper that opens the SunExpress website in a headless browser. Only tried when both primary sources return nothing. Useful for SunExpress-only routes (e.g. Turkey domestic / charter to Germany).
 
-If all three return nothing for a watch, the bot skips that watch for this poll and tries again in 60 minutes. No error is sent to you.
+When a price passes your threshold, the bot makes one additional **Duffel** call to verify the fare is still bookable at that price before sending the alert. If Duffel can't reach the price, the alert is suppressed. If Duffel itself fails, the alert fires using the cached price anyway.
+
+If all sources return nothing for a watch, the bot skips that watch for this poll and tries again in 60 minutes. No error is sent to you.
 
 ---
 
@@ -196,8 +198,10 @@ The alert message looks like this:
 ```
 Flight alert: IST → LHR
 Dates: 2026-08-01 – 2026-08-15
-Price: 185.0 EUR  (your threshold: 200.0 EUR)
-Book: https://www.kiwi.com/deep?token=...
+Price: 185.0 EUR
+Your alert threshold: 200.0 EUR
+Fare: Basic
+Book: https://www.aviasales.com/search/IST0108LHR1
 ```
 
 Click the booking URL to go directly to the cheapest result found.
@@ -224,8 +228,8 @@ Logs are written to `logs/bot.log`. If something seems wrong, check that file fi
 
 **I never get any price alerts.**
 - Check that your `max_price` is realistic (above current market price for the route).
-- Verify your `KIWI_API_KEY` is valid — log into tequila.kiwi.com and check the key status.
-- Set `LOG_LEVEL=DEBUG` in `.env` and restart; this logs every Kiwi API response to `logs/bot.log`.
+- Travelpayouts returns cached data — some routes may have no cached results. The bot will fall through to Amadeus then the SunExpress scraper.
+- Set `LOG_LEVEL=DEBUG` in `.env` and restart; this logs every API response to `logs/bot.log`.
 
 **I get the error "No module named telegram".**
 - Run `pip install -r requirements.txt` again.

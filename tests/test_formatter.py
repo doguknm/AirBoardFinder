@@ -11,7 +11,7 @@ WATCH = {
     "date_to": "2026-06-10",
     "max_price": 200.0,
 }
-BOOKING_URL = "https://www.kiwi.com/deep?token=abc"
+BOOKING_URL = "https://www.aviasales.com/search/IST0106LHR1"
 
 
 @pytest.fixture
