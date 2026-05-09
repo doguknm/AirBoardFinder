@@ -173,8 +173,7 @@ You can only delete your own watches. Another Telegram user running the same bot
 You cannot manually choose which source to use — the bot tries them in order, automatically:
 
 1. **Travelpayouts** (primary): checked first on every poll. Returns cached Aviasales prices (48h–7d old). Covers most commercial routes globally. Free.
-2. **Amadeus** (fallback): tried when Travelpayouts returns no results. Covers major airlines and routes. Note: Amadeus Self-Service is shutting down July 2026 and will be removed then.
-3. **SunExpress scraper** (last resort): a web scraper that opens the SunExpress website in a headless browser. Only tried when both primary sources return nothing. Useful for SunExpress-only routes (e.g. Turkey domestic / charter to Germany).
+2. **SunExpress scraper** (fallback): a web scraper that opens the SunExpress website in a headless browser. Only tried when Travelpayouts returns nothing. Useful for SunExpress-only routes (e.g. Turkey domestic / charter to Germany).
 
 When a price passes your threshold, the bot makes one additional **Duffel** call to verify the fare is still bookable at that price before sending the alert. If Duffel can't reach the price, the alert is suppressed. If Duffel itself fails, the alert fires using the cached price anyway.
 
@@ -228,7 +227,7 @@ Logs are written to `logs/bot.log`. If something seems wrong, check that file fi
 
 **I never get any price alerts.**
 - Check that your `max_price` is realistic (above current market price for the route).
-- Travelpayouts returns cached data — some routes may have no cached results. The bot will fall through to Amadeus then the SunExpress scraper.
+- Travelpayouts returns cached data — some routes may have no cached results. The bot will fall through to the SunExpress scraper.
 - Set `LOG_LEVEL=DEBUG` in `.env` and restart; this logs every API response to `logs/bot.log`.
 
 **I get the error "No module named telegram".**

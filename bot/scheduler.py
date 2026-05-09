@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from bot import amadeus_client, db, duffel_client, formatter, sunexpress_scraper, travelpayouts_client
+from bot import db, duffel_client, formatter, sunexpress_scraper, travelpayouts_client
 
 
 LOGGER = logging.getLogger(__name__)
@@ -35,20 +35,7 @@ async def poll_all_watches(
 
         if result is None:
             LOGGER.warning(
-                "Travelpayouts returned no result for watch %s, trying Amadeus.", watch_id
-            )
-            result = await asyncio.to_thread(
-                amadeus_client.fetch_price,
-                watch["origin"],
-                watch["destination"],
-                watch["date_from"],
-                watch["date_to"],
-            )
-
-        if result is None:
-            LOGGER.warning(
-                "Amadeus returned no result for watch %s, trying SunExpress.",
-                watch_id,
+                "Travelpayouts returned no result for watch %s, trying SunExpress.", watch_id
             )
             result = await sunexpress_scraper.fetch_price(
                 watch["origin"],

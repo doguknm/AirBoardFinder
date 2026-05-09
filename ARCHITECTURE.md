@@ -20,8 +20,7 @@ AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight
 | Pre-alert verification | Duffel API (real-time, pay-per-verify) |
 | HTTP client | httpx (async) |
 | Storage | SQLite 3 (stdlib `sqlite3`, no ORM) |
-| Secondary fallback | Amadeus Self-Service (shutting down July 2026) |
-| Tertiary fallback | SunExpress scraper (Playwright) |
+| Secondary fallback | SunExpress scraper (Playwright) |
 | Runtime | Python 3.12 |
 | Config | python-dotenv |
 
@@ -37,8 +36,7 @@ AirBoardFinder/
 │   ├── db.py                        # Schema init, watches CRUD, deduplication, price history
 │   ├── travelpayouts_client.py      # Travelpayouts Aviasales Data API — primary polling source
 │   ├── duffel_client.py             # Duffel API — pre-alert price verification
-│   ├── amadeus_client.py            # Amadeus — secondary fallback (shutting down July 2026)
-│   ├── sunexpress_scraper.py        # SunExpress Playwright scraper — tertiary fallback
+│   ├── sunexpress_scraper.py        # SunExpress Playwright scraper — secondary fallback
 │   ├── formatter.py                 # Alert message formatter + aviasales_url()
 │   ├── handlers.py                  # Telegram command handlers (/watch, /list, /delete)
 │   └── scheduler.py                 # APScheduler job: poll all active watches
@@ -72,7 +70,7 @@ AirBoardFinder/
 | `bot/duffel_client.py` | `verify_price()` — async POST to Duffel offer-requests endpoint. Returns cheapest real-time offer with `{price, currency, booking_url, fare_family}` or `None`. Never used for booking — verification only. |
 | `bot/formatter.py` | `format_alert()` — produces the Telegram message string from watch + price data. Optional `fare_family` parameter adds a "Fare:" line when provided. `aviasales_url()` — shared Aviasales deep-link builder used by all three API clients. |
 | `bot/handlers.py` | Async handlers for `/watch` (create), `/list` (read), `/delete` (soft-delete). `/watch` accepts optional 6th arg for currency (default EUR). All operations scoped to `update.effective_user.id`. |
-| `bot/scheduler.py` | `poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)` — async APScheduler job. Polling chain: Travelpayouts → Amadeus → SunExpress. When a price passes threshold + dedup, calls Duffel to verify before sending alert. |
+| `bot/scheduler.py` | `poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)` — async APScheduler job. Polling chain: Travelpayouts → SunExpress. When a price passes threshold + dedup, calls Duffel to verify before sending alert. |
 
 ---
 
@@ -90,8 +88,7 @@ AsyncIOScheduler
                         [header: X-Access-Token: ...]
                         ├─ data[dest] found → return {price, currency, booking_url, airline}
                         └─ no data → return None
-                 if None → amadeus_client.fetch_price(...)  [secondary fallback]
-                 if None → sunexpress_scraper.fetch_price(...)  [tertiary fallback]
+                 if None → sunexpress_scraper.fetch_price(...)  [secondary fallback]
                  if None → skip watch (log INFO)
                  db.insert_price_history(db_path, watch_id, price, currency, booking_url)
                  if price <= watch["max_price"]:
@@ -291,8 +288,6 @@ return True
 | `TELEGRAM_TOKEN` | Yes | Bot token from @BotFather |
 | `TRAVELPAYOUTS_TOKEN` | Yes | Travelpayouts Data API token (free, from travelpayouts.com) |
 | `DUFFEL_API_KEY` | Yes | Duffel API key (from app.duffel.com) |
-| `AMADEUS_CLIENT_ID` | Yes | Amadeus Self-Service client ID (secondary fallback) |
-| `AMADEUS_CLIENT_SECRET` | Yes | Amadeus Self-Service client secret |
 | `LOG_LEVEL` | No (default `INFO`) | Python logging level |
 
 `DB_PATH` is a code constant in `main.py`: `"data/airboard.db"`. Not env-configurable.
@@ -343,7 +338,7 @@ Single-user personal tool — SQLite's zero-overhead, no-server model is correct
 
 7. **Travelpayouts TRY currency support is undocumented**
    - **Symptom:** Travelpayouts returns a non-2xx response or empty data when `currency=TRY` is passed.
-   - **Fix:** The scheduler falls through to Amadeus/SunExpress when `fetch_price` returns `None`. No special handling in the client — if TRY is unsupported, the fallback chain handles it transparently.
+   - **Fix:** The scheduler falls through to SunExpress when `fetch_price` returns `None`. No special handling in the client — if TRY is unsupported, the fallback chain handles it transparently.
 
 8. **Duffel `None` return must not suppress an alert**
    - **Symptom:** Alerts stop firing even though Travelpayouts found a matching price.
@@ -353,6 +348,3 @@ Single-user personal tool — SQLite's zero-overhead, no-server model is correct
    - **Symptom:** `OperationalError: table watches has no column named currency` on an old database.
    - **Fix:** `db.init_db()` wraps the `ALTER TABLE` in `try/except sqlite3.OperationalError` so it silently skips on fresh installs (column already in `CREATE TABLE`) and applies on old databases.
 
-10. **Amadeus Self-Service is scheduled for decommissioning on July 17, 2026**
-    - **Symptom:** All Amadeus calls return 401/403 after July 2026.
-    - **Fix:** Remove Amadeus from the fallback chain before that date. The bot will continue functioning with only Travelpayouts + SunExpress until then.

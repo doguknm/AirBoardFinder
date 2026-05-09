@@ -42,35 +42,7 @@ async def test_poll_inserts_price_history_and_sends_alert(db_path, watch_id, mon
     assert db.should_send_alert(db_path, watch_id, 189.0) is False
 
 
-async def test_poll_falls_back_to_amadeus_when_travelpayouts_returns_none(
-    db_path, watch_id, monkeypatch, caplog
-):
-    bot = AsyncMock()
-    amadeus_mock = AsyncMock(
-        return_value={"price": 188.0, "currency": "EUR", "booking_url": "https://a.test"}
-    )
-    monkeypatch.setattr(
-        "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
-    )
-    monkeypatch.setattr(
-        "bot.scheduler.asyncio.to_thread",
-        lambda fn, *args: amadeus_mock(*args),
-    )
-    monkeypatch.setattr("bot.scheduler.sunexpress_scraper.fetch_price", AsyncMock())
-    monkeypatch.setattr(
-        "bot.scheduler.duffel_client.verify_price",
-        AsyncMock(return_value={"price": 188.0, "currency": "EUR", "booking_url": "https://a.test", "fare_family": None}),
-    )
-    monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
-
-    with caplog.at_level("WARNING", logger="bot.scheduler"):
-        await poll_all_watches(bot, db_path, "tp-token", "duffel-key")
-
-    amadeus_mock.assert_awaited_once()
-    bot.send_message.assert_awaited_once()
-
-
-async def test_poll_falls_back_to_sunexpress_when_travelpayouts_and_amadeus_return_none(
+async def test_poll_falls_back_to_sunexpress_when_travelpayouts_returns_none(
     db_path, watch_id, monkeypatch, caplog
 ):
     bot = AsyncMock()
@@ -79,9 +51,6 @@ async def test_poll_falls_back_to_sunexpress_when_travelpayouts_and_amadeus_retu
     )
     monkeypatch.setattr(
         "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
-    )
-    monkeypatch.setattr(
-        "bot.scheduler.asyncio.to_thread", lambda fn, *args: AsyncMock(return_value=None)()
     )
     monkeypatch.setattr("bot.scheduler.sunexpress_scraper.fetch_price", sunexpress_mock)
     monkeypatch.setattr(
