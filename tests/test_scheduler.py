@@ -17,7 +17,7 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def watch_id(db_path):
-    return db.create_watch(db_path, 123, "IST", "LHR", "2026-06-01", "2026-06-10", 200.0)
+    return db.create_watch(db_path, 123, "IST", "LHR", "2026-06-01", "2026-06-10", 200.0, "EUR")
 
 
 _TP_RESULT = {"price": 189.0, "currency": "EUR", "booking_url": "https://av.test", "airline": "TK"}
@@ -64,6 +64,31 @@ async def test_poll_falls_back_to_sunexpress_when_travelpayouts_returns_none(
 
     sunexpress_mock.assert_awaited_once()
     bot.send_message.assert_awaited_once()
+
+
+async def test_poll_falls_back_to_pegasus_when_sunexpress_returns_none(
+    db_path, watch_id, monkeypatch
+):
+    bot = AsyncMock()
+    pegasus_mock = AsyncMock(
+        return_value={"price": 750.0, "currency": "TRY", "booking_url": "https://flypgs.test"}
+    )
+    monkeypatch.setattr(
+        "bot.scheduler.travelpayouts_client.fetch_price", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        "bot.scheduler.sunexpress_scraper.fetch_price", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr("bot.scheduler.pegasus_scraper.fetch_price", pegasus_mock)
+    monkeypatch.setattr(
+        "bot.scheduler.duffel_client.verify_price", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr("bot.scheduler.asyncio.sleep", AsyncMock())
+
+    await poll_all_watches(bot, db_path, "tp-token", "duffel-key")
+
+    pegasus_mock.assert_awaited_once()
+    bot.send_message.assert_awaited_once()  # 750 TRY = ~13.89 EUR, below 200 EUR threshold
 
 
 async def test_poll_does_not_send_alert_above_threshold(db_path, watch_id, monkeypatch):

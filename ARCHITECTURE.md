@@ -6,7 +6,7 @@ Authoritative technical reference. Read this before touching any module.
 
 ## System Purpose
 
-AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight prices on behalf of registered users. Every 60 minutes APScheduler fires a polling job that queries the Travelpayouts Aviasales Data API (free, cached) for each active watch (origin, destination, date range, price threshold + currency stored in SQLite). When a cached price is at or below the user's threshold and passes a two-layer deduplication check, the bot makes a single real-time Duffel API call to verify the fare is still bookable before sending a Telegram alert. Users create and manage watches via three Telegram commands: `/watch`, `/list`, `/delete`.
+AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight prices on behalf of registered users. Every 60 minutes APScheduler fires a polling job that queries the Travelpayouts Aviasales Data API (free, cached) for each active watch (origin, destination, date range, price threshold + currency stored in SQLite). When a cached price is at or below the user's threshold and passes a two-layer deduplication check, the bot makes a single real-time Duffel API call to verify the fare is still bookable before sending a Telegram alert. Users create and manage watches via three Telegram commands: `/watch`, `/list`, `/delete`. The default currency throughout the system is **TRY**; EUR is also supported and converted automatically via a configurable `EUR_TRY_RATE`.
 
 ---
 
@@ -20,7 +20,8 @@ AirBoardFinder is a single-process Python 3.12 Telegram bot that monitors flight
 | Pre-alert verification | Duffel API (real-time, pay-per-verify) |
 | HTTP client | httpx (async) |
 | Storage | SQLite 3 (stdlib `sqlite3`, no ORM) |
-| Secondary fallback | SunExpress scraper (Playwright) |
+| Fallback 1 | SunExpress scraper (Playwright) |
+| Fallback 2 | Pegasus Airlines scraper (Playwright) |
 | Runtime | Python 3.12 |
 | Config | python-dotenv |
 
@@ -36,7 +37,8 @@ AirBoardFinder/
 │   ├── db.py                        # Schema init, watches CRUD, deduplication, price history
 │   ├── travelpayouts_client.py      # Travelpayouts Aviasales Data API — primary polling source
 │   ├── duffel_client.py             # Duffel API — pre-alert price verification
-│   ├── sunexpress_scraper.py        # SunExpress Playwright scraper — secondary fallback
+│   ├── sunexpress_scraper.py        # SunExpress Playwright scraper — fallback 1
+│   ├── pegasus_scraper.py           # Pegasus Airlines Playwright scraper — fallback 2
 │   ├── formatter.py                 # Alert message formatter + aviasales_url()
 │   ├── handlers.py                  # Telegram command handlers (/watch, /list, /delete)
 │   └── scheduler.py                 # APScheduler job: poll all active watches
@@ -70,7 +72,9 @@ AirBoardFinder/
 | `bot/duffel_client.py` | `verify_price()` — async POST to Duffel offer-requests endpoint. Returns cheapest real-time offer with `{price, currency, booking_url, fare_family}` or `None`. Never used for booking — verification only. |
 | `bot/formatter.py` | `format_alert()` — produces the Telegram message string from watch + price data. Optional `fare_family` parameter adds a "Fare:" line when provided. `aviasales_url()` — shared Aviasales deep-link builder used by all three API clients. |
 | `bot/handlers.py` | Async handlers for `/watch` (create), `/list` (read), `/delete` (soft-delete). `/watch` accepts optional 6th arg for currency (default EUR). All operations scoped to `update.effective_user.id`. |
-| `bot/scheduler.py` | `poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)` — async APScheduler job. Polling chain: Travelpayouts → SunExpress. When a price passes threshold + dedup, calls Duffel to verify before sending alert. |
+| `bot/sunexpress_scraper.py` | `fetch_price()` — Playwright headless Chromium scraper for SunExpress (`sunexpress.com/en-gb/booking/select/`). Iterates one URL per date in the watch range (single-date search limitation). Always requests and returns **TRY** prices. Never raises outward. |
+| `bot/pegasus_scraper.py` | `fetch_price()` — Playwright headless Chromium scraper for Pegasus Airlines (`web.flypgs.com/booking`). Iterates one URL per date in the watch range. Always requests and returns **EUR** prices. Never raises outward. |
+| `bot/scheduler.py` | `poll_all_watches(bot, db_path, travelpayouts_token, duffel_api_key)` — async APScheduler job. Polling chain: Travelpayouts → SunExpress → Pegasus. `_normalize_price()` converts scraper results to the watch's currency (EUR↔TRY via `EUR_TRY_RATE`) before threshold comparison. |
 
 ---
 
@@ -88,8 +92,11 @@ AsyncIOScheduler
                         [header: X-Access-Token: ...]
                         ├─ data[dest] found → return {price, currency, booking_url, airline}
                         └─ no data → return None
-                 if None → sunexpress_scraper.fetch_price(...)  [secondary fallback]
+                 if None → sunexpress_scraper.fetch_price(...)  [fallback 1, returns TRY]
+                 if None → pegasus_scraper.fetch_price(...)    [fallback 2, returns EUR]
                  if None → skip watch (log INFO)
+                 _normalize_price(price, src_currency, watch_currency)
+                   [converts TRY↔EUR via EUR_TRY_RATE when currencies differ]
                  db.insert_price_history(db_path, watch_id, price, currency, booking_url)
                  if price <= watch["max_price"]:
                    db.should_send_alert(db_path, watch_id, price)
@@ -131,7 +138,7 @@ Telegram update received
 | `date_from` | TEXT | NOT NULL | ISO-8601 date string `"YYYY-MM-DD"` |
 | `date_to` | TEXT | NOT NULL | ISO-8601 date string `"YYYY-MM-DD"` |
 | `max_price` | REAL | NOT NULL | User's price threshold |
-| `currency` | TEXT | NOT NULL DEFAULT `'EUR'` | ISO 4217 currency code (e.g. `"EUR"`, `"TRY"`) — added via `ALTER TABLE` on startup |
+| `currency` | TEXT | NOT NULL DEFAULT `'TRY'` | ISO 4217 currency code (e.g. `"TRY"`, `"EUR"`) — added via `ALTER TABLE` on startup |
 | `created_at` | TEXT | NOT NULL DEFAULT (datetime('now')) | |
 | `is_active` | INTEGER | NOT NULL DEFAULT 1 | 1 = active, 0 = soft-deleted |
 
@@ -271,7 +278,7 @@ return True
 
 | Command | Signature | Success reply | Error reply |
 |---|---|---|---|
-| `/watch` | `/watch <origin> <destination> <date_from> <date_to> <max_price> [currency]` | `Watch created (ID: {id}). I'll alert you when {origin} → {destination} drops to {max_price} {currency} or below.` | Usage string or validation error message |
+| `/watch` | `/watch <origin> <destination> <date_from> <date_to> <max_price> [currency]` — currency defaults to `TRY` | `Watch created (ID: {id}). I'll alert you when {origin} → {destination} drops to {max_price} {currency} or below.` | Usage string or validation error message |
 | `/list` | `/list` | Formatted list — one watch per line: `[{id}] {origin}→{destination} {date_from}–{date_to} max {max_price} {currency}` | `You have no active watches.` |
 | `/delete` | `/delete <watch_id>` | `Watch {watch_id} deleted.` | `Watch not found or does not belong to you.` |
 
@@ -290,6 +297,7 @@ return True
 | `TRAVELPAYOUTS_TOKEN` | Yes | Travelpayouts Data API token (free, from travelpayouts.com) |
 | `DUFFEL_API_KEY` | Yes | Duffel API key (from app.duffel.com) |
 | `LOG_LEVEL` | No (default `INFO`) | Python logging level |
+| `EUR_TRY_RATE` | No (default `54.0`) | Exchange rate used to convert Pegasus (EUR) prices to TRY and vice versa |
 
 `DB_PATH` is defined once in `bot/db.py` (`"data/airboard.db"`) and imported by `main.py` and `handlers.py`. Not env-configurable.
 
@@ -345,7 +353,11 @@ Single-user personal tool — SQLite's zero-overhead, no-server model is correct
    - **Symptom:** Alerts stop firing even though Travelpayouts found a matching price.
    - **Fix:** In `scheduler.py`, when `duffel_client.verify_price()` returns `None`, proceed with the originally polled price and send the alert. Duffel is a best-effort verifier, not a gating condition.
 
-9. **`watches.currency` column is added via `ALTER TABLE` at startup for existing DBs**
+9. **Scraper currencies are fixed — SunExpress always TRY, Pegasus always EUR**
+   - **Symptom:** Changing the watch currency does not change what currency the scraper requests or returns. SunExpress always hits `currency=TRY` in the URL and returns TRY prices; Pegasus always hits `currency=EUR` and returns EUR prices.
+   - **Fix:** `_normalize_price()` in `scheduler.py` automatically converts the scraper result to the watch's currency using `EUR_TRY_RATE` before the threshold comparison. No manual action needed — just keep `EUR_TRY_RATE` in `.env` up to date.
+
+10. **`watches.currency` column is added via `ALTER TABLE` at startup for existing DBs**
    - **Symptom:** `OperationalError: table watches has no column named currency` on an old database.
    - **Fix:** `db.init_db()` wraps the `ALTER TABLE` in `try/except sqlite3.OperationalError` so it silently skips on fresh installs (column already in `CREATE TABLE`) and applies on old databases.
 

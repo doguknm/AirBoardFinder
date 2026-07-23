@@ -7,10 +7,5 @@ pytest-tmp/
 .coverage
 htmlcov/
 
-# Internal dev docs — not for public repo
-AGENTS.md
-CHANGELOG.md
-CLAUDE.md
-CONTRIBUTING.md
-Plans/
+# Local Claude Code settings (machine-specific)
 .claude/

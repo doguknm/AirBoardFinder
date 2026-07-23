@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS watches (
     date_from   TEXT    NOT NULL,
     date_to     TEXT    NOT NULL,
     max_price   REAL    NOT NULL,
-    currency    TEXT    NOT NULL DEFAULT 'EUR',
+    currency    TEXT    NOT NULL DEFAULT 'TRY',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     is_active   INTEGER NOT NULL DEFAULT 1
 );
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     watch_id    INTEGER NOT NULL REFERENCES watches(id),
     price       REAL    NOT NULL,
-    currency    TEXT    NOT NULL DEFAULT 'EUR',
+    currency    TEXT    NOT NULL DEFAULT 'TRY',
     booking_url TEXT    NOT NULL,
     checked_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -70,7 +70,7 @@ def init_db(db_path: str) -> None:
         conn.executescript(CREATE_INDEXES_SQL)
         try:
             conn.execute(
-                "ALTER TABLE watches ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'"
+                "ALTER TABLE watches ADD COLUMN currency TEXT NOT NULL DEFAULT 'TRY'"
             )
         except sqlite3.OperationalError:
             pass  # column already exists on existing databases
@@ -85,7 +85,7 @@ def create_watch(
     date_from: str,
     date_to: str,
     max_price: float,
-    currency: str = "EUR",
+    currency: str = "TRY",
 ) -> int:
     """Insert an active watch and return its database ID."""
     with closing(sqlite3.connect(db_path)) as conn:

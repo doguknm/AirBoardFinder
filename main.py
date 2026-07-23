@@ -52,6 +52,8 @@ def main() -> None:
 
     application = ApplicationBuilder().token(telegram_token).build()
     application.bot_data["db_path"] = DB_PATH
+    application.bot_data["travelpayouts_token"] = travelpayouts_token
+    application.bot_data["duffel_api_key"] = duffel_api_key
 
     application.add_handler(CommandHandler("watch", handlers.watch_handler))
     application.add_handler(CommandHandler("list", handlers.list_handler))
@@ -61,7 +63,8 @@ def main() -> None:
     scheduler.add_job(
         poll_all_watches,
         trigger="interval",
-        minutes=60,
+        minutes=2,  # TODO: change back to 60 after testing
+
         args=[
             application.bot,
             DB_PATH,

@@ -52,7 +52,7 @@ async def test_watch_handler_creates_watch_and_replies_with_id(db_path):
     assert "ID:" in reply_text
     watches = db.get_watches_for_user(db_path, 42)
     assert len(watches) == 1
-    assert watches[0]["currency"] == "EUR"
+    assert watches[0]["currency"] == "TRY"
 
 
 async def test_watch_handler_accepts_try_currency(db_path):
@@ -68,6 +68,38 @@ async def test_watch_handler_accepts_try_currency(db_path):
     assert "TRY" in reply_text
     watches = db.get_watches_for_user(db_path, 42)
     assert watches[0]["currency"] == "TRY"
+
+
+async def test_watch_handler_short_format_creates_watch(db_path):
+    update = _make_update()
+    ctx = _make_context(db_path, args=["SAW-HTY", "2026-06-01", "3000"])
+
+    await handlers.watch_handler(update, ctx)
+
+    reply_text = update.effective_message.reply_text.call_args[0][0]
+    assert "Watch created" in reply_text
+    watches = db.get_watches_for_user(db_path, 42)
+    assert len(watches) == 1
+    assert watches[0]["origin"] == "SAW"
+    assert watches[0]["destination"] == "HTY"
+    assert watches[0]["date_from"] == "2026-06-01"
+    assert watches[0]["date_to"] == "2026-06-01"
+    assert watches[0]["max_price"] == 3000.0
+    assert watches[0]["currency"] == "TRY"
+
+
+async def test_watch_handler_short_format_with_currency(db_path):
+    update = _make_update()
+    ctx = _make_context(db_path, args=["IST-LHR", "2026-08-15", "200", "EUR"])
+
+    await handlers.watch_handler(update, ctx)
+
+    watches = db.get_watches_for_user(db_path, 42)
+    assert watches[0]["origin"] == "IST"
+    assert watches[0]["destination"] == "LHR"
+    assert watches[0]["date_from"] == "2026-08-15"
+    assert watches[0]["date_to"] == "2026-08-15"
+    assert watches[0]["currency"] == "EUR"
 
 
 async def test_watch_handler_wrong_arg_count_sends_usage(db_path):

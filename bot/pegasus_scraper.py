@@ -1,4 +1,4 @@
-"""SunExpress Playwright scraper fallback."""
+"""Pegasus Airlines Playwright scraper fallback."""
 
 from __future__ import annotations
 
@@ -20,14 +20,15 @@ LOGGER = logging.getLogger(__name__)
 
 def _search_url(origin: str, destination: str, departure_date: str) -> str:
     query = urlencode({
-        "origin1": origin,
-        "destination1": destination,
-        "departure1": departure_date,
-        "adt1": 1, "chd1": 0, "inf1": 0,
-        "adt2": 1, "chd2": 0, "inf2": 0,
-        "currency": "TRY",
+        "language": "en",
+        "adultCount": 1,
+        "departurePort": origin,
+        "arrivalPort": destination,
+        "currency": "EUR",
+        "dateOption": 1,
+        "departureDate": departure_date,
     })
-    return f"https://www.sunexpress.com/en-gb/booking/select/?{query}"
+    return f"https://web.flypgs.com/booking?{query}"
 
 
 async def fetch_price(
@@ -36,9 +37,9 @@ async def fetch_price(
     date_from: str,
     date_to: str,
 ) -> dict[str, Any] | None:
-    """Scrape SunExpress for the cheapest one-way TRY price across the date range, never raising outward."""
+    """Scrape Pegasus Airlines for the cheapest one-way EUR price across the date range, never raising outward."""
     if async_playwright is None or stealth_async is None:
-        LOGGER.warning("SunExpress scraper failed: Playwright dependencies are not installed")
+        LOGGER.warning("Pegasus scraper failed: Playwright dependencies are not installed")
         return None
 
     try:
@@ -73,11 +74,11 @@ async def fetch_price(
 
                 return {
                     "price": min_price,
-                    "currency": "TRY",
+                    "currency": "EUR",
                     "booking_url": _search_url(origin, destination, best_date),
                 }
             finally:
                 await browser.close()
     except Exception as exc:
-        LOGGER.warning("SunExpress scraper failed: %s", exc)
+        LOGGER.warning("Pegasus scraper failed: %s", exc)
         return None
